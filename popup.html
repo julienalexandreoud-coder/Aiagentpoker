@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 320px;
+            padding: 20px;
+            background: #0f172a;
+            color: #f1f5f9;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 18px;
+            background: linear-gradient(to right, #818cf8, #a78bfa);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-fill-color: transparent;
+        }
+
+        .section {
+            background: rgba(30, 41, 59, 0.5);
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: #94a3b8;
+            margin-bottom: 5px;
+        }
+
+        input {
+            width: 100%;
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #f8fafc;
+            padding: 8px;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 13px;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .btn-primary {
+            background: #6366f1;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #4f46e5;
+        }
+
+        .btn-secondary {
+            background: #334155;
+            color: #f1f5f9;
+        }
+
+        .btn-secondary:hover {
+            background: #475569;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .status {
+            text-align: center;
+            font-size: 12px;
+            color: #64748b;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h2>AI Agent Player <span style="font-size: 10px; color: #64748b; font-weight: normal;">v2.6</span></h2>
+    </div>
+
+    <div class="section">
+        <label>Selected casino</label>
+        <select id="casino-selector"
+            style="width: 100%; background: #1e293b; border: 1px solid #334155; color: #f8fafc; padding: 8px; border-radius: 6px; box-sizing: border-box; font-size: 13px;">
+            <option value="pokerstars">PokerStars (ES Layout)</option>
+            <option value="winamax">Winamax (ES Layout)</option>
+            <option value="generic">Generic / Other (Upcoming)</option>
+        </select>
+    </div>
+
+    <div class="section">
+        <label>Google AI Studio API Key</label>
+        <input type="password" id="api-key" placeholder="Enter your Gemini API key">
+    </div>
+
+    <div class="section">
+        <button id="toggle-calibration" class="btn btn-secondary">Toggle Calibration Overlay</button>
+        <button id="view-dashboard" class="btn btn-secondary">View Dashboard & Stats</button>
+        <button id="start-btn" class="btn btn-primary">Start AI Agent</button>
+        <button id="stop-btn" class="btn btn-danger" style="display: none;">Stop AI Agent</button>
+    </div>
+
+    <div class="status" id="status-text">Ready</div>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>
