@@ -4,7 +4,7 @@
 let apiKey = '';
 let isRunning = false;
 let currentCasino = 'pokerstars'; // Default casino
-let loopInterval = 2500; // REDUCED to 2.5s for near-instant surveillance
+let loopInterval = 3000; // 3s polling for real-time response
 let timerId = null;
 let lastActionState = ""; // To prevent double-clicking same state/action
 let lastActionTime = 0;   // Timestamp of the last successful action recommendation
@@ -46,7 +46,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 function startLoop() {
     if (timerId) clearInterval(timerId);
-    console.log("🚀 AI Agent: Starting Real-Time Sync loop...");
+    console.log("🚀 AI Agent: Starting Speed Engine loop...");
     timerId = setInterval(processTick, loopInterval);
     processTick();
 }
@@ -66,12 +66,10 @@ async function processTick() {
         const screenshot = await captureTab();
 
         // --- local change detection ---
-        if (screenshot === lastScreenshotData) {
-            return;
-        }
+        if (screenshot === lastScreenshotData) return;
         lastScreenshotData = screenshot;
 
-        console.log("🧠 Analyzing (Real-Time Sync Mode)...");
+        console.log("🧠 Analyzing (Immediate Action Mode)...");
         const analysis = await analyzeWithGemini(screenshot);
 
         if (analysis && analysis.recommendation) {
@@ -83,7 +81,7 @@ async function processTick() {
             const isPokerAction = ["FOLD", "CHECK", "CALL", "RAISE", "BET"].some(a => action.includes(a));
 
             if (action === "WAIT" || (isPokerAction && !isHeroTurn)) {
-                updateOverlayStatus("WAITING", reasoning);
+                updateOverlayStatus("WAITING", reasoning, math);
                 lastActionState = "";
                 return;
             }
@@ -93,7 +91,7 @@ async function processTick() {
 
             if (handKey === lastActionState) {
                 const timeSinceLastAction = now - lastActionTime;
-                if (timeSinceLastAction > 15000 && !didRetryThisState) {
+                if (timeSinceLastAction > 10000 && !didRetryThisState) {
                     didRetryThisState = true;
                     lastActionTime = now;
                 } else {
@@ -106,26 +104,21 @@ async function processTick() {
             }
 
             console.log(`🤖 Action detected: ${action}`);
+            updateOverlayStatus("ACTING", `Executing ${action}...`, math);
 
-            // 10-SECOND THINKING DELAY with REAL-TIME SURVEILLANCE
-            updateOverlayStatus("THINKING", `Monitoring table for changes...`, math);
+            saveActionToHistory({
+                timestamp: new Date().toISOString(),
+                action,
+                math,
+                reasoning,
+                verified_turn: isHeroTurn
+            });
 
-            let stateAborted = false;
-            const surveillanceInterval = setInterval(async () => {
-                if (!isRunning) { clearInterval(surveillanceInterval); return; }
-                const currentCheck = await captureTab();
-                if (currentCheck !== lastScreenshotData) {
-                    console.log("⚠️ TABLE CHANGED during thinking! Aborting current path.");
-                    stateAborted = true;
-                    lastScreenshotData = currentCheck; // Update sync
-                    clearInterval(surveillanceInterval);
-                    processTick(); // Re-trigger immediate analysis
-                }
-            }, 1500); // Check for UI changes every 1.5s while "thinking"
+            // Minor random delay for stability (300-500ms)
+            const clickDelay = Math.floor(Math.random() * 200) + 300;
 
             setTimeout(async () => {
-                clearInterval(surveillanceInterval);
-                if (!isRunning || stateAborted) return;
+                if (!isRunning) return;
 
                 let target = null;
                 if (action.includes('FOLD')) target = 'FOLD';
@@ -134,6 +127,7 @@ async function processTick() {
                 else if (action.includes('SIT_BACK')) target = 'SIT_BACK';
 
                 if (target) {
+                    // Final verification to ensure turn is still active
                     const finalCheck = await captureTab();
                     const stateCheck = await analyzeWithGemini(finalCheck, true);
 
@@ -142,16 +136,17 @@ async function processTick() {
                         updateOverlayStatus(action, reasoning, math);
                         executeClick(target);
                     } else {
-                        updateOverlayStatus("ABORTED", "Game state updated.", null);
+                        console.log("🛑 Turn expired during analysis. Aborting click.");
+                        updateOverlayStatus("EXPIRED", "Table updated.", null);
                     }
                 }
-            }, 10000);
+            }, clickDelay);
         }
     } catch (err) {
         if (err.message && err.message.includes("429")) {
-            updateOverlayStatus("API LIMIT", "Waiting 10s...", null);
+            updateOverlayStatus("API LIMIT", "Waiting 15s...", null);
             stopLoop();
-            setTimeout(() => { if (isRunning) startLoop(); }, 10000);
+            setTimeout(() => { if (isRunning) startLoop(); }, 15000);
         } else {
             updateOverlayStatus("ERROR", err.message || "Unknown error", null);
         }
@@ -190,7 +185,7 @@ function updateOverlayStatus(action, reason, math = null) {
 
 async function captureTab() {
     return new Promise((resolve, reject) => {
-        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 60 }, (dataUrl) => { // Quality 60 for speed
+        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 60 }, (dataUrl) => {
             if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
             else resolve(dataUrl);
         });
@@ -205,7 +200,8 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
     if (isFastCheck) {
         prompt = `QUICK CHECK: Is Hero turn? { "is_hero_turn": true/false }`;
     } else {
-        prompt = `You are a PURE GTO MATH SOLVER. Analyze for "${currentCasino === 'winamax' ? 'Abun122' : 'SupersaiyanAbun'}".
+        const hero = currentCasino === 'winamax' ? 'Abun122' : 'SupersaiyanAbun';
+        prompt = `You are an ULTRA-CONSERVATIVE GTO SOLVER. Analyze for "${hero}".
         MANDATORY: FOLD if EV is not clearly positive.
         JSON format: { "is_hero_turn": true/false, "math": { "equity": "XX%", "pot_odds": "X:X", "outs": "X", "ev": "Pos/Neg" }, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
     }
