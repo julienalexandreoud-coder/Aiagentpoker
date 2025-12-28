@@ -4,7 +4,7 @@
 let apiKey = '';
 let isRunning = false;
 let currentCasino = 'pokerstars'; // Default casino
-let loopInterval = 3500; // Reduced to 3.5s for faster reaction
+let loopInterval = 6000; // Increased to 6 seconds for slower state scanning
 let timerId = null;
 let lastActionState = ""; // To prevent double-clicking same state/action
 let lastActionTime = 0;   // Timestamp of the last successful action recommendation
@@ -73,7 +73,7 @@ async function processTick() {
         }
         lastScreenshotData = screenshot;
 
-        console.log("🧠 Analyzing game state (Real-Time Risk Guard Mode)...");
+        console.log("🧠 Analyzing game state (Ultra-Patient Mode)...");
         const analysis = await analyzeWithGemini(screenshot);
 
         if (analysis && analysis.recommendation) {
@@ -94,7 +94,7 @@ async function processTick() {
 
             if (handKey === lastActionState) {
                 const timeSinceLastAction = now - lastActionTime;
-                if (timeSinceLastAction > 10000 && !didRetryThisState) {
+                if (timeSinceLastAction > 15000 && !didRetryThisState) { // Increased to 15s because of thinking time
                     console.log("🔄 Same turn persists. Retrying click...");
                     didRetryThisState = true;
                     lastActionTime = now;
@@ -107,8 +107,12 @@ async function processTick() {
                 didRetryThisState = false;
             }
 
-            console.log(`🤖 Action: ${action} | Risk Analysis: ${reasoning.split(']')[0]}]`);
-            updateOverlayStatus(action, reasoning);
+            console.log(`🤖 Action: ${action}`);
+
+            // 10-SECOND THINKING DELAY (Human-like patience)
+            const thinkingDelay = 10000;
+            updateOverlayStatus("THINKING", `Evaluating EV... (10s delay)`);
+            console.log(`⏳ Thinking... Will act in 10s.`);
 
             saveActionToHistory({
                 timestamp: new Date().toISOString(),
@@ -117,9 +121,9 @@ async function processTick() {
                 verified_turn: isHeroTurn
             });
 
-            // Moderate human delay - Optimized for speed
-            const delay = Math.floor(Math.random() * 200) + 300;
             setTimeout(async () => {
+                if (!isRunning) return;
+
                 let target = null;
                 if (action.includes('FOLD')) target = 'FOLD';
                 else if (action.includes('RAISE') || action.includes('BET')) target = 'RAISE';
@@ -127,20 +131,20 @@ async function processTick() {
                 else if (action.includes('SIT_BACK')) target = 'SIT_BACK';
 
                 if (target) {
-                    // REAL-TIME DOUBLE-CHECK: Re-capture and verify turn is still active
                     console.log("🔍 Pre-Click Verification: Checking if turn is still active...");
                     const finalCheck = await captureTab();
-                    const stateCheck = await analyzeWithGemini(finalCheck, true); // Fast check mode
+                    const stateCheck = await analyzeWithGemini(finalCheck, true);
 
                     if (stateCheck && stateCheck.is_hero_turn) {
                         console.log(`🖱️ Executing verified click on: ${target}`);
+                        updateOverlayStatus(action, reasoning);
                         executeClick(target);
                     } else {
-                        console.log("🛑 Pre-Click Verification FAILED: Game state changed. Aborting click.");
-                        updateOverlayStatus("ABORTED", "Turn expired or state changed.");
+                        console.log("🛑 State changed during thinking. Aborting click.");
+                        updateOverlayStatus("ABORTED", "Turn expired or game state changed.");
                     }
                 }
-            }, delay);
+            }, thinkingDelay);
         }
     } catch (err) {
         if (err.message && err.message.includes("429")) {
@@ -195,7 +199,7 @@ function saveActionToHistory(actionItem) {
 
 async function captureTab() {
     return new Promise((resolve, reject) => {
-        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 }, (dataUrl) => { // Quality 70 for speed
+        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 }, (dataUrl) => {
             if (chrome.runtime.lastError) {
                 reject(chrome.runtime.lastError);
             } else {
@@ -212,15 +216,15 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
     let prompt = "";
 
     if (isFastCheck) {
-        prompt = `QUICK CHECK: Is it Hero's turn? Look for LARGE RED ACTION BUTTONS bottom right. Respond ONLY with JSON: { "is_hero_turn": true/false }`;
+        prompt = `QUICK CHECK: Is it Hero's turn? Respond ONLY with JSON: { "is_hero_turn": true/false }`;
     } else if (currentCasino === "pokerstars") {
-        prompt = `You are an ULTIMATE GTO SOLVER with a STRICT RISK MANAGEMENT protocol. Analyze for "SupersaiyanAbun".
+        prompt = `You are an ULTRA-CONSERVATIVE GTO SOLVER. Analyze for "SupersaiyanAbun".
 
-        RISK MANAGEMENT PROTOCOL (SAFETY FIRST):
-        - NO ALL-IN: Never recommend "ALL-IN" or putting the entire stack at risk unless you have the ABSOLUTE NUTS (the best possible hand).
-        - TRASH FILTER: If "SupersaiyanAbun" has hands like 72, 94, J3 (unsuited, unconnected trash), FOLD immediately if there is any bet from opponents, regardless of potential.
-        - POT LIMITATION: Prioritize small/medium pots. Avoid high-variance bluffs.
-        - BANKROLL PROTECTION: If the risk of losing the hand outweighs the EV by a factor of 2:1, favor the FOLD or CHECK.
+        EV-POSITIVE STRICT RULE:
+        - MANDATORY FOLD: If the Expected Value (EV) is not clearly POSITIVE (+EV), you MUST recommend "FOLD". No exceptions.
+        - NO MARGINAL CALLS: Do not call with draws unless the Pot Odds are significantly better than the Equity (e.g., 3:1 odds for a 20% draw is a FOLD).
+        - ZERO BLUFFS: Only play strong, value-driven hands. Fold everything else.
+        - NO ALL-IN: Never risk the whole stack.
 
         IDENTITY & TURN VERIFICATION:
         1. LOCATE Hero "SupersaiyanAbun".
@@ -233,20 +237,16 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
             "hero_cards": "RankSuit",
             "board": "RankSuit",
             "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT/SIT_BACK",
-            "reasoning": "RISK EVALUATION: [Risk Level: Low/Med/High] [Hand Quality: Trash/Mediocre/Strong] [Why this action protects the stack: Detailed GTO explanation focusing on safety over greed.]"
+            "reasoning": "EV CALCULATION: [EV: Positive/Negative] [Math: Briefly state the equity vs odds] [Why FOLD: Explain why it's a fold if EV is not clearly positive.]"
         }`;
     } else if (currentCasino === "winamax") {
-        prompt = `You are a PURE GTO MATH SOLVER with a CONSERVATIVE RISK PROFILE. Analyze for "Abun122". 
+        prompt = `You are a PURE GTO MATH SOLVER - ULTRA PATIENT. Analyze for "Abun122". 
 
-        CRITICAL RISK RULES:
-        - FORBIDDEN ACTION: NEVER recommend "ALL-IN" for bluffs. Only "ALL-IN" with 95%+ win probability.
-        - VALUE OVER BLUFF: Do not play high amounts with weak/speculative hands. 
-        - ESCAPE ROUTE: If the opponent displays extreme aggression (3-bet/4-bet), FOLD unless holding a Premium pair (JJ+).
-
-        IDENTITY & TURN VERIFICATION:
-        1. LOCATE "Abun122".
-        2. VERIFY TURN: Confirmed if LARGE RED ACTION BUTTONS ("NO IR", "IGUALAR", "SUBIR A") are visible.
-
+        STRICT EV PROTOCOL:
+        - IF EV <= 0 THEN FOLD. 100% frequency.
+        - NO SPECULATION: Do not call with speculative hands (connectors, small pairs) if the price is high.
+        - PROTECTION: Preserve the stack at all costs. Avoid high amounts with weak hands.
+        
         REQUIRED OUTPUT FORMAT (JSON):
         {
             "is_hero_turn": true/false,
@@ -254,7 +254,7 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
             "hero_cards": "RankSuit",
             "board": "RankSuit",
             "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT/SIT_BACK",
-            "reasoning": "CONSERVATIVE BREAKDOWN: [Risk: XX%] [Asset Protection: Why we chose not to risk more chips] [GTO Safety Analysis: Logic for avoiding the All-In path.]"
+            "reasoning": "ULTRA-CONSERVATIVE: [EV Status: ...] [Rationale: Mathematical proof of +EV or why we FOLD to avoid chip bleed.]"
         }`;
     } else {
         prompt = `You are a Poker AI. JSON only: { "is_hero_turn": true/false, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
