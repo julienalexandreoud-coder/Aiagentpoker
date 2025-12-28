@@ -1,14 +1,14 @@
 // AI Agent Player - Background Script
-// Handles Screenshot Capture, Gemini API, and the Main Loop
+// Handles Screenshot Capture, Gemini API, and Real-Time State Sync
 
 let apiKey = '';
 let isRunning = false;
 let currentCasino = 'pokerstars'; // Default casino
-let loopInterval = 6000; // 6 seconds for slower state scanning
+let loopInterval = 2500; // REDUCED to 2.5s for near-instant surveillance
 let timerId = null;
 let lastActionState = ""; // To prevent double-clicking same state/action
 let lastActionTime = 0;   // Timestamp of the last successful action recommendation
-let didRetryThisState = false; // Flag to allow exactly one retry per state if stuck
+let didRetryThisState = false;
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
@@ -22,7 +22,7 @@ chrome.storage.local.get(['pokeragent_apikey', 'pokeragent_casino'], (result) =>
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === "START_AGENT") {
         isRunning = true;
-        lastActionState = ""; // Reset on start
+        lastActionState = "";
         startLoop();
         sendResponse({ status: "started" });
     }
@@ -46,9 +46,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 function startLoop() {
     if (timerId) clearInterval(timerId);
-    console.log("🚀 AI Agent: Starting main loop...");
+    console.log("🚀 AI Agent: Starting Real-Time Sync loop...");
     timerId = setInterval(processTick, loopInterval);
-    processTick(); // Run once immediately
+    processTick();
 }
 
 function stopLoop() {
@@ -57,7 +57,7 @@ function stopLoop() {
     console.log("🛑 AI Agent: Loop stopped.");
 }
 
-let lastScreenshotData = null; // For local change detection
+let lastScreenshotData = null;
 
 async function processTick() {
     if (!isRunning || !apiKey) return;
@@ -67,12 +67,11 @@ async function processTick() {
 
         // --- local change detection ---
         if (screenshot === lastScreenshotData) {
-            console.log("⏸️ Table static. Skipping analysis.");
             return;
         }
         lastScreenshotData = screenshot;
 
-        console.log("🧠 Analyzing game state (Visual Math Mode)...");
+        console.log("🧠 Analyzing (Real-Time Sync Mode)...");
         const analysis = await analyzeWithGemini(screenshot);
 
         if (analysis && analysis.recommendation) {
@@ -95,7 +94,6 @@ async function processTick() {
             if (handKey === lastActionState) {
                 const timeSinceLastAction = now - lastActionTime;
                 if (timeSinceLastAction > 15000 && !didRetryThisState) {
-                    console.log("🔄 Same turn persists. Retrying click...");
                     didRetryThisState = true;
                     lastActionTime = now;
                 } else {
@@ -107,23 +105,27 @@ async function processTick() {
                 didRetryThisState = false;
             }
 
-            console.log(`🤖 Action: ${action}`);
+            console.log(`🤖 Action detected: ${action}`);
 
-            // 10-SECOND THINKING DELAY
-            const thinkingDelay = 10000;
-            updateOverlayStatus("THINKING", `Evaluating Math Data...`, math);
-            console.log(`⏳ Thinking... Will act in 10s.`);
+            // 10-SECOND THINKING DELAY with REAL-TIME SURVEILLANCE
+            updateOverlayStatus("THINKING", `Monitoring table for changes...`, math);
 
-            saveActionToHistory({
-                timestamp: new Date().toISOString(),
-                action,
-                math,
-                reasoning,
-                verified_turn: isHeroTurn
-            });
+            let stateAborted = false;
+            const surveillanceInterval = setInterval(async () => {
+                if (!isRunning) { clearInterval(surveillanceInterval); return; }
+                const currentCheck = await captureTab();
+                if (currentCheck !== lastScreenshotData) {
+                    console.log("⚠️ TABLE CHANGED during thinking! Aborting current path.");
+                    stateAborted = true;
+                    lastScreenshotData = currentCheck; // Update sync
+                    clearInterval(surveillanceInterval);
+                    processTick(); // Re-trigger immediate analysis
+                }
+            }, 1500); // Check for UI changes every 1.5s while "thinking"
 
             setTimeout(async () => {
-                if (!isRunning) return;
+                clearInterval(surveillanceInterval);
+                if (!isRunning || stateAborted) return;
 
                 let target = null;
                 if (action.includes('FOLD')) target = 'FOLD';
@@ -136,24 +138,21 @@ async function processTick() {
                     const stateCheck = await analyzeWithGemini(finalCheck, true);
 
                     if (stateCheck && stateCheck.is_hero_turn) {
-                        console.log(`🖱️ Executing verified click on: ${target}`);
+                        console.log(`🖱️ Executing action: ${target}`);
                         updateOverlayStatus(action, reasoning, math);
                         executeClick(target);
                     } else {
-                        console.log("🛑 State changed during thinking. Aborting.");
-                        updateOverlayStatus("ABORTED", "Turn expired.", null);
+                        updateOverlayStatus("ABORTED", "Game state updated.", null);
                     }
                 }
-            }, thinkingDelay);
+            }, 10000);
         }
     } catch (err) {
         if (err.message && err.message.includes("429")) {
-            console.error("⛔ API Limit. Slowing down...");
             updateOverlayStatus("API LIMIT", "Waiting 10s...", null);
             stopLoop();
             setTimeout(() => { if (isRunning) startLoop(); }, 10000);
         } else {
-            console.error("❌ Loop Error:", err);
             updateOverlayStatus("ERROR", err.message || "Unknown error", null);
         }
     }
@@ -189,90 +188,31 @@ function updateOverlayStatus(action, reason, math = null) {
     });
 }
 
-function saveActionToHistory(actionItem) {
-    chrome.storage.local.get(['pokeragent_history'], (result) => {
-        let history = result.pokeragent_history || [];
-        history.unshift(actionItem);
-        if (history.length > 1000) history = history.slice(0, 1000);
-        chrome.storage.local.set({ pokeragent_history: history });
-    });
-}
-
 async function captureTab() {
     return new Promise((resolve, reject) => {
-        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 }, (dataUrl) => {
-            if (chrome.runtime.lastError) {
-                reject(chrome.runtime.lastError);
-            } else {
-                resolve(dataUrl);
-            }
+        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 60 }, (dataUrl) => { // Quality 60 for speed
+            if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+            else resolve(dataUrl);
         });
     });
 }
 
 async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
     if (!apiKey) throw new Error("API Key missing");
-
     const base64Data = imageDataUrl.replace(/^data:image\/\w+;base64,/, '');
     let prompt = "";
 
     if (isFastCheck) {
-        prompt = `QUICK CHECK: Is it Hero's turn? Respond ONLY with JSON: { "is_hero_turn": true/false }`;
-    } else if (currentCasino === "pokerstars") {
-        prompt = `You are an ULTRA-CONSERVATIVE GTO SOLVER. Analyze for "SupersaiyanAbun".
-
-        MATHEMATICAL ANALYSIS RULES:
-        1. Calculate Equity vs Range.
-        2. Calculate Pot Odds.
-        3. Identify specific Outs.
-        4. MANDATORY FOLD if EV is not clearly positive.
-
-        REQUIRED OUTPUT FORMAT (JSON):
-        {
-            "is_hero_turn": true/false,
-            "math": {
-                "equity": "XX%",
-                "pot_odds": "X:X",
-                "outs": "Count and names",
-                "ev": "Positive/Negative/Neutral"
-            },
-            "hero_cards": "RankSuit",
-            "board": "RankSuit",
-            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT",
-            "reasoning": "Detailed GTO path."
-        }`;
-    } else if (currentCasino === "winamax") {
-        prompt = `You are a PURE GTO MATH SOLVER. Analyze for "Abun122". 
-        
-        REQUIRED OUTPUT FORMAT (JSON):
-        {
-            "is_hero_turn": true/false,
-            "math": {
-                "equity": "XX%",
-                "pot_odds": "X:X",
-                "outs": "Count and names",
-                "ev": "Positive/Negative/Neutral"
-            },
-            "hero_cards": "RankSuit",
-            "board": "RankSuit",
-            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT",
-            "reasoning": "Detailed GTO path."
-        }`;
+        prompt = `QUICK CHECK: Is Hero turn? { "is_hero_turn": true/false }`;
     } else {
-        prompt = `You are a Poker AI. JSON only: { "is_hero_turn": true/false, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
+        prompt = `You are a PURE GTO MATH SOLVER. Analyze for "${currentCasino === 'winamax' ? 'Abun122' : 'SupersaiyanAbun'}".
+        MANDATORY: FOLD if EV is not clearly positive.
+        JSON format: { "is_hero_turn": true/false, "math": { "equity": "XX%", "pot_odds": "X:X", "outs": "X", "ev": "Pos/Neg" }, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
     }
 
     const body = {
-        contents: [{
-            parts: [
-                { text: prompt },
-                { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
-            ]
-        }],
-        generationConfig: {
-            temperature: 0.1,
-            response_mime_type: "application/json"
-        }
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: base64Data } }] }],
+        generationConfig: { temperature: 0.1, response_mime_type: "application/json" }
     };
 
     const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
@@ -281,12 +221,7 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
         body: JSON.stringify(body)
     });
 
-    if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Gemini API Error: ${err}`);
-    }
-
+    if (!response.ok) throw new Error(`API Error: ${await response.text()}`);
     const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    return JSON.parse(text);
+    return JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text);
 }
