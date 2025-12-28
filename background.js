@@ -4,12 +4,13 @@
 let apiKey = '';
 let isRunning = false;
 let currentCasino = 'pokerstars'; // Default casino
-let loopInterval = 4500; // 4.5 seconds to stay under 15 RPM limit
+let loopInterval = 3500; // Reduced to 3.5s for faster reaction
 let timerId = null;
 let lastActionState = ""; // To prevent double-clicking same state/action
 let lastActionTime = 0;   // Timestamp of the last successful action recommendation
 let didRetryThisState = false; // Flag to allow exactly one retry per state if stuck
 
+// Use Gemini 2.0 Flash for maximum real-time speed
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Load settings
@@ -65,15 +66,14 @@ async function processTick() {
     try {
         const screenshot = await captureTab();
 
-        // --- 1. LOCAL CHANGE DETECTION (CRITICAL SIMPLIFICATION) ---
-        // Compare with last screenshot to avoid redundant API calls and clicking
+        // --- local change detection ---
         if (screenshot === lastScreenshotData) {
             console.log("⏸️ Table static. Skipping analysis.");
             return;
         }
         lastScreenshotData = screenshot;
 
-        console.log("🧠 Analyzing game state...");
+        console.log("🧠 Analyzing game state (Real-Time Mode)...");
         const analysis = await analyzeWithGemini(screenshot);
 
         if (analysis && analysis.recommendation) {
@@ -81,9 +81,6 @@ async function processTick() {
             const reasoning = analysis.reasoning || "";
             const isHeroTurn = analysis.is_hero_turn === true;
 
-            // --- 2. TURN VERIFICATION SAFETY ---
-            // Poker actions (FOLD/CALL/RAISE) require is_hero_turn = true.
-            // SIT_BACK is allowed regardless of turn status.
             const isPokerAction = ["FOLD", "CHECK", "CALL", "RAISE", "BET"].some(a => action.includes(a));
 
             if (action === "WAIT" || (isPokerAction && !isHeroTurn)) {
@@ -92,31 +89,25 @@ async function processTick() {
                 return;
             }
 
-            // --- 3. EXECUTION LOCK & RETRY LOGIC ---
-            // Create a unique key for this exact hand state and action
             const handKey = `${analysis.hero_cards || '?'}-${analysis.board || '?'}-${action}`;
             const now = Date.now();
 
-            // If it's the SAME state, check if we need to RETRY
             if (handKey === lastActionState) {
                 const timeSinceLastAction = now - lastActionTime;
-
-                // If it's been more than 10 seconds and we ARE still in our turn, RETRY ONCE
                 if (timeSinceLastAction > 10000 && !didRetryThisState) {
-                    console.log("🔄 Same turn persists. Retrying click for reliability...");
+                    console.log("🔄 Same turn persists. Retrying click...");
                     didRetryThisState = true;
-                    lastActionTime = now; // Reset timer for next retry if needed
+                    lastActionTime = now;
                 } else {
-                    return; // Still waiting for UI to update or already retried
+                    return;
                 }
             } else {
-                // NEW STATE: Reset for fresh action
                 lastActionState = handKey;
                 lastActionTime = now;
                 didRetryThisState = false;
             }
 
-            console.log(`🤖 Action: ${action} (Verified Turn: ${isHeroTurn})`);
+            console.log(`🤖 Action: ${action}`);
             updateOverlayStatus(action, reasoning);
 
             saveActionToHistory({
@@ -126,9 +117,9 @@ async function processTick() {
                 verified_turn: isHeroTurn
             });
 
-            // Moderate human delay
-            const delay = Math.floor(Math.random() * 500) + 600; // Slightly faster delay (600ms - 1100ms)
-            setTimeout(() => {
+            // Moderate human delay - Optimized for speed
+            const delay = Math.floor(Math.random() * 200) + 300;
+            setTimeout(async () => {
                 let target = null;
                 if (action.includes('FOLD')) target = 'FOLD';
                 else if (action.includes('RAISE') || action.includes('BET')) target = 'RAISE';
@@ -136,20 +127,27 @@ async function processTick() {
                 else if (action.includes('SIT_BACK')) target = 'SIT_BACK';
 
                 if (target) {
-                    console.log(`🖱️ Executing verified click on: ${target}`);
-                    executeClick(target);
+                    // REAL-TIME DOUBLE-CHECK: Re-capture and verify turn is still active
+                    console.log("🔍 Pre-Click Verification: Checking if turn is still active...");
+                    const finalCheck = await captureTab();
+                    const stateCheck = await analyzeWithGemini(finalCheck, true); // Fast check mode
+
+                    if (stateCheck && stateCheck.is_hero_turn) {
+                        console.log(`🖱️ Executing verified click on: ${target}`);
+                        executeClick(target);
+                    } else {
+                        console.log("🛑 Pre-Click Verification FAILED: Game state changed. Aborting click.");
+                        updateOverlayStatus("ABORTED", "Turn expired or state changed.");
+                    }
                 }
             }, delay);
         }
     } catch (err) {
         if (err.message && err.message.includes("429")) {
-            console.error("⛔ API Limit Reached (429). Slowing down...");
-            updateOverlayStatus("API LIMIT", "Gemini Limit Reached. Waiting 10s...");
-            // Temporary slowdown
+            console.error("⛔ API Limit. Slowing down...");
+            updateOverlayStatus("API LIMIT", "Waiting 10s...");
             stopLoop();
-            setTimeout(() => {
-                if (isRunning) startLoop();
-            }, 10000);
+            setTimeout(() => { if (isRunning) startLoop(); }, 10000);
         } else {
             console.error("❌ Loop Error:", err);
             updateOverlayStatus("ERROR", err.message || "Unknown error");
@@ -189,18 +187,15 @@ function updateOverlayStatus(action, reason) {
 function saveActionToHistory(actionItem) {
     chrome.storage.local.get(['pokeragent_history'], (result) => {
         let history = result.pokeragent_history || [];
-        history.unshift(actionItem); // Add to beginning
-
-        // Keep last 1000 actions
+        history.unshift(actionItem);
         if (history.length > 1000) history = history.slice(0, 1000);
-
         chrome.storage.local.set({ pokeragent_history: history });
     });
 }
 
 async function captureTab() {
     return new Promise((resolve, reject) => {
-        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 }, (dataUrl) => { // Quality 70 for speed
             if (chrome.runtime.lastError) {
                 reject(chrome.runtime.lastError);
             } else {
@@ -210,15 +205,15 @@ async function captureTab() {
     });
 }
 
-async function analyzeWithGemini(imageDataUrl) {
+async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
     if (!apiKey) throw new Error("API Key missing");
 
     const base64Data = imageDataUrl.replace(/^data:image\/\w+;base64,/, '');
-
-    // Dynamic Prompt Selection
     let prompt = "";
 
-    if (currentCasino === "pokerstars") {
+    if (isFastCheck) {
+        prompt = `QUICK CHECK: Is it Hero's turn? Look for LARGE RED ACTION BUTTONS bottom right. Respond ONLY with JSON: { "is_hero_turn": true/false }`;
+    } else if (currentCasino === "pokerstars") {
         prompt = `You are an ULTIMATE GTO SOLVER (PioSolver/MonkerSolver class). Analyze the PokerStars screenshot for "SupersaiyanAbun". 
 
         IDENTITY & TURN VERIFICATION:
@@ -267,19 +262,7 @@ async function analyzeWithGemini(imageDataUrl) {
             "reasoning": "GTO BREAKDOWN: [Hand Value: XX%] [Win Prob: XX%] [Targeting: Describe hand being chased] [Detailed Rationale: Explained pot equity vs odds and range blockers.]"
         }`;
     } else {
-        // Generic / Fallback Prompt
-        prompt = `You are a Poker AI Assistant. Analyze the table and suggest an action.
-        
-        STEP 1: Identify if it is our turn.
-        STEP 2: Identify visible buttons.
-        STEP 3: Suggest FOLD/CHECK/CALL/RAISE or WAIT.
-        
-        JSON format:
-        {
-            "is_hero_turn": true/false,
-            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT",
-            "reasoning": "Explain the decision"
-        }`;
+        prompt = `You are a Poker AI. JSON only: { "is_hero_turn": true/false, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
     }
 
     const body = {
