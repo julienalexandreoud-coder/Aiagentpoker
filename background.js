@@ -4,13 +4,12 @@
 let apiKey = '';
 let isRunning = false;
 let currentCasino = 'pokerstars'; // Default casino
-let loopInterval = 6000; // Increased to 6 seconds for slower state scanning
+let loopInterval = 6000; // 6 seconds for slower state scanning
 let timerId = null;
 let lastActionState = ""; // To prevent double-clicking same state/action
 let lastActionTime = 0;   // Timestamp of the last successful action recommendation
 let didRetryThisState = false; // Flag to allow exactly one retry per state if stuck
 
-// Use Gemini 2.0 Flash for maximum real-time speed
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Load settings
@@ -73,13 +72,14 @@ async function processTick() {
         }
         lastScreenshotData = screenshot;
 
-        console.log("🧠 Analyzing game state (Ultra-Patient Mode)...");
+        console.log("🧠 Analyzing game state (Visual Math Mode)...");
         const analysis = await analyzeWithGemini(screenshot);
 
         if (analysis && analysis.recommendation) {
             const action = analysis.recommendation.toUpperCase();
             const reasoning = analysis.reasoning || "";
             const isHeroTurn = analysis.is_hero_turn === true;
+            const math = analysis.math || null;
 
             const isPokerAction = ["FOLD", "CHECK", "CALL", "RAISE", "BET"].some(a => action.includes(a));
 
@@ -94,7 +94,7 @@ async function processTick() {
 
             if (handKey === lastActionState) {
                 const timeSinceLastAction = now - lastActionTime;
-                if (timeSinceLastAction > 15000 && !didRetryThisState) { // Increased to 15s because of thinking time
+                if (timeSinceLastAction > 15000 && !didRetryThisState) {
                     console.log("🔄 Same turn persists. Retrying click...");
                     didRetryThisState = true;
                     lastActionTime = now;
@@ -109,14 +109,15 @@ async function processTick() {
 
             console.log(`🤖 Action: ${action}`);
 
-            // 10-SECOND THINKING DELAY (Human-like patience)
+            // 10-SECOND THINKING DELAY
             const thinkingDelay = 10000;
-            updateOverlayStatus("THINKING", `Evaluating EV... (10s delay)`);
+            updateOverlayStatus("THINKING", `Evaluating Math Data...`, math);
             console.log(`⏳ Thinking... Will act in 10s.`);
 
             saveActionToHistory({
                 timestamp: new Date().toISOString(),
                 action,
+                math,
                 reasoning,
                 verified_turn: isHeroTurn
             });
@@ -131,17 +132,16 @@ async function processTick() {
                 else if (action.includes('SIT_BACK')) target = 'SIT_BACK';
 
                 if (target) {
-                    console.log("🔍 Pre-Click Verification: Checking if turn is still active...");
                     const finalCheck = await captureTab();
                     const stateCheck = await analyzeWithGemini(finalCheck, true);
 
                     if (stateCheck && stateCheck.is_hero_turn) {
                         console.log(`🖱️ Executing verified click on: ${target}`);
-                        updateOverlayStatus(action, reasoning);
+                        updateOverlayStatus(action, reasoning, math);
                         executeClick(target);
                     } else {
-                        console.log("🛑 State changed during thinking. Aborting click.");
-                        updateOverlayStatus("ABORTED", "Turn expired or game state changed.");
+                        console.log("🛑 State changed during thinking. Aborting.");
+                        updateOverlayStatus("ABORTED", "Turn expired.", null);
                     }
                 }
             }, thinkingDelay);
@@ -149,12 +149,12 @@ async function processTick() {
     } catch (err) {
         if (err.message && err.message.includes("429")) {
             console.error("⛔ API Limit. Slowing down...");
-            updateOverlayStatus("API LIMIT", "Waiting 10s...");
+            updateOverlayStatus("API LIMIT", "Waiting 10s...", null);
             stopLoop();
             setTimeout(() => { if (isRunning) startLoop(); }, 10000);
         } else {
             console.error("❌ Loop Error:", err);
-            updateOverlayStatus("ERROR", err.message || "Unknown error");
+            updateOverlayStatus("ERROR", err.message || "Unknown error", null);
         }
     }
 }
@@ -171,7 +171,7 @@ function executeClick(target) {
     });
 }
 
-function updateOverlayStatus(action, reason) {
+function updateOverlayStatus(action, reason, math = null) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
             chrome.webNavigation.getAllFrames({ tabId: tabs[0].id }, (frames) => {
@@ -180,6 +180,7 @@ function updateOverlayStatus(action, reason) {
                         type: "UPDATE_AI_STATUS",
                         action,
                         reason,
+                        math,
                         time: new Date().toLocaleTimeString()
                     }, { frameId: frame.frameId });
                 });
@@ -220,41 +221,42 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
     } else if (currentCasino === "pokerstars") {
         prompt = `You are an ULTRA-CONSERVATIVE GTO SOLVER. Analyze for "SupersaiyanAbun".
 
-        EV-POSITIVE STRICT RULE:
-        - MANDATORY FOLD: If the Expected Value (EV) is not clearly POSITIVE (+EV), you MUST recommend "FOLD". No exceptions.
-        - NO MARGINAL CALLS: Do not call with draws unless the Pot Odds are significantly better than the Equity (e.g., 3:1 odds for a 20% draw is a FOLD).
-        - ZERO BLUFFS: Only play strong, value-driven hands. Fold everything else.
-        - NO ALL-IN: Never risk the whole stack.
-
-        IDENTITY & TURN VERIFICATION:
-        1. LOCATE Hero "SupersaiyanAbun".
-        2. VERIFY TURN: It is Hero's turn ONLY if the LARGE RED RECTANGULAR BUTTONS ("No ir", "Igualar", "Subir a") are bottom-right and ACTIVE. 
+        MATHEMATICAL ANALYSIS RULES:
+        1. Calculate Equity vs Range.
+        2. Calculate Pot Odds.
+        3. Identify specific Outs.
+        4. MANDATORY FOLD if EV is not clearly positive.
 
         REQUIRED OUTPUT FORMAT (JSON):
         {
             "is_hero_turn": true/false,
-            "hero_name": "SupersaiyanAbun",
+            "math": {
+                "equity": "XX%",
+                "pot_odds": "X:X",
+                "outs": "Count and names",
+                "ev": "Positive/Negative/Neutral"
+            },
             "hero_cards": "RankSuit",
             "board": "RankSuit",
-            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT/SIT_BACK",
-            "reasoning": "EV CALCULATION: [EV: Positive/Negative] [Math: Briefly state the equity vs odds] [Why FOLD: Explain why it's a fold if EV is not clearly positive.]"
+            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT",
+            "reasoning": "Detailed GTO path."
         }`;
     } else if (currentCasino === "winamax") {
-        prompt = `You are a PURE GTO MATH SOLVER - ULTRA PATIENT. Analyze for "Abun122". 
-
-        STRICT EV PROTOCOL:
-        - IF EV <= 0 THEN FOLD. 100% frequency.
-        - NO SPECULATION: Do not call with speculative hands (connectors, small pairs) if the price is high.
-        - PROTECTION: Preserve the stack at all costs. Avoid high amounts with weak hands.
+        prompt = `You are a PURE GTO MATH SOLVER. Analyze for "Abun122". 
         
         REQUIRED OUTPUT FORMAT (JSON):
         {
             "is_hero_turn": true/false,
-            "hero_name": "Abun122",
+            "math": {
+                "equity": "XX%",
+                "pot_odds": "X:X",
+                "outs": "Count and names",
+                "ev": "Positive/Negative/Neutral"
+            },
             "hero_cards": "RankSuit",
             "board": "RankSuit",
-            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT/SIT_BACK",
-            "reasoning": "ULTRA-CONSERVATIVE: [EV Status: ...] [Rationale: Mathematical proof of +EV or why we FOLD to avoid chip bleed.]"
+            "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT",
+            "reasoning": "Detailed GTO path."
         }`;
     } else {
         prompt = `You are a Poker AI. JSON only: { "is_hero_turn": true/false, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
