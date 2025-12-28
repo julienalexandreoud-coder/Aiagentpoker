@@ -73,7 +73,7 @@ async function processTick() {
         }
         lastScreenshotData = screenshot;
 
-        console.log("🧠 Analyzing game state (Real-Time Mode)...");
+        console.log("🧠 Analyzing game state (Real-Time Risk Guard Mode)...");
         const analysis = await analyzeWithGemini(screenshot);
 
         if (analysis && analysis.recommendation) {
@@ -107,7 +107,7 @@ async function processTick() {
                 didRetryThisState = false;
             }
 
-            console.log(`🤖 Action: ${action}`);
+            console.log(`🤖 Action: ${action} | Risk Analysis: ${reasoning.split(']')[0]}]`);
             updateOverlayStatus(action, reasoning);
 
             saveActionToHistory({
@@ -214,52 +214,47 @@ async function analyzeWithGemini(imageDataUrl, isFastCheck = false) {
     if (isFastCheck) {
         prompt = `QUICK CHECK: Is it Hero's turn? Look for LARGE RED ACTION BUTTONS bottom right. Respond ONLY with JSON: { "is_hero_turn": true/false }`;
     } else if (currentCasino === "pokerstars") {
-        prompt = `You are an ULTIMATE GTO SOLVER (PioSolver/MonkerSolver class). Analyze the PokerStars screenshot for "SupersaiyanAbun". 
+        prompt = `You are an ULTIMATE GTO SOLVER with a STRICT RISK MANAGEMENT protocol. Analyze for "SupersaiyanAbun".
+
+        RISK MANAGEMENT PROTOCOL (SAFETY FIRST):
+        - NO ALL-IN: Never recommend "ALL-IN" or putting the entire stack at risk unless you have the ABSOLUTE NUTS (the best possible hand).
+        - TRASH FILTER: If "SupersaiyanAbun" has hands like 72, 94, J3 (unsuited, unconnected trash), FOLD immediately if there is any bet from opponents, regardless of potential.
+        - POT LIMITATION: Prioritize small/medium pots. Avoid high-variance bluffs.
+        - BANKROLL PROTECTION: If the risk of losing the hand outweighs the EV by a factor of 2:1, favor the FOLD or CHECK.
 
         IDENTITY & TURN VERIFICATION:
         1. LOCATE Hero "SupersaiyanAbun".
         2. VERIFY TURN: It is Hero's turn ONLY if the LARGE RED RECTANGULAR BUTTONS ("No ir", "Igualar", "Subir a") are bottom-right and ACTIVE. 
-        3. If not Hero's turn, recommend "WAIT".
-
-        GTO STRATEGIC ANALYSIS (DO NOT SKIP):
-        - POT ODDS & EQUITY: Calculate Pot Odds vs estimated Equity.
-        - SPR (Stack-to-Pot Ratio): Adjust aggression based on remaining stacks.
-        - RANGE ANALYSIS: Determine if Hero's range is Polarity-driven or Linear.
-        - COMBINATORICS: Use blockers (card removal) to decide between bluffs and value bets.
-        - MDF (Minimum Defense Frequency): Calculate if we must call based on villain's sizing.
 
         REQUIRED OUTPUT FORMAT (JSON):
         {
             "is_hero_turn": true/false,
             "hero_name": "SupersaiyanAbun",
-            "hero_cards": "RankSuit (e.g., AhKd)",
-            "board": "RankSuit (e.g., QsJh7d) or 'EMPTY'",
+            "hero_cards": "RankSuit",
+            "board": "RankSuit",
             "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT/SIT_BACK",
-            "reasoning": "COMPREHENSIVE ANALYSIS: [1] CURRENT VALUE: State hand strength (e.g., Top Pair, Nut Flush Draw). [2] PROBABILITY: Estimated % to win. [3] DRAW ANALYSIS: What are we chasing? (e.g., 'Straight draw to the nut 9'). [4] GTO ACTION: Why this sizing/action beats villain's long-term range."
+            "reasoning": "RISK EVALUATION: [Risk Level: Low/Med/High] [Hand Quality: Trash/Mediocre/Strong] [Why this action protects the stack: Detailed GTO explanation focusing on safety over greed.]"
         }`;
     } else if (currentCasino === "winamax") {
-        prompt = `You are a PURE GTO MATH SOLVER. Analyze the Winamax screenshot for "Abun122". 
-        
-        CRITICAL: IGNORE all on-screen advice/labels from Winamax. Use ONLY GTO mathematics.
-        
+        prompt = `You are a PURE GTO MATH SOLVER with a CONSERVATIVE RISK PROFILE. Analyze for "Abun122". 
+
+        CRITICAL RISK RULES:
+        - FORBIDDEN ACTION: NEVER recommend "ALL-IN" for bluffs. Only "ALL-IN" with 95%+ win probability.
+        - VALUE OVER BLUFF: Do not play high amounts with weak/speculative hands. 
+        - ESCAPE ROUTE: If the opponent displays extreme aggression (3-bet/4-bet), FOLD unless holding a Premium pair (JJ+).
+
         IDENTITY & TURN VERIFICATION:
         1. LOCATE "Abun122".
-        2. VERIFY TURN: Confirmed if LARGE RED ACTION BUTTONS ("NO IR", "IGUALAR", "SUBIR A") are visible at the bottom.
-        
-        GTO SOLVER PROTOCOL:
-        - VALUE IDENTIFICATION: Calculate the expected value (EV) of the current hand.
-        - WIN PERCENTAGE: Provide a mathematical estimate of win probability against the opponent's range.
-        - CHASE ANALYSIS: Detail what draws we are chasing and the implied odds.
-        - EXPLOITATIVE ADJUSTMENT: Balance of value and bluffs.
+        2. VERIFY TURN: Confirmed if LARGE RED ACTION BUTTONS ("NO IR", "IGUALAR", "SUBIR A") are visible.
 
         REQUIRED OUTPUT FORMAT (JSON):
         {
             "is_hero_turn": true/false,
             "hero_name": "Abun122",
-            "hero_cards": "RankSuit (e.g., 9hTs)",
-            "board": "RankSuit or 'EMPTY'",
+            "hero_cards": "RankSuit",
+            "board": "RankSuit",
             "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT/SIT_BACK",
-            "reasoning": "GTO BREAKDOWN: [Hand Value: XX%] [Win Prob: XX%] [Targeting: Describe hand being chased] [Detailed Rationale: Explained pot equity vs odds and range blockers.]"
+            "reasoning": "CONSERVATIVE BREAKDOWN: [Risk: XX%] [Asset Protection: Why we chose not to risk more chips] [GTO Safety Analysis: Logic for avoiding the All-In path.]"
         }`;
     } else {
         prompt = `You are a Poker AI. JSON only: { "is_hero_turn": true/false, "recommendation": "FOLD/CHECK/CALL/RAISE/WAIT", "reasoning": "..." }`;
